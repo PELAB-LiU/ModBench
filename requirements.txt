@@ -1,0 +1,5 @@
+python-dotenv
+tqdm
+GitPython
+OMPython
+
