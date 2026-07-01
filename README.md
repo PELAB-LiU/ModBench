@@ -160,7 +160,7 @@ with ModelicaDataset() as ds:
     failures = ds.list_canonicalization_failures("MSL")
 ```
 
-Capabilities (matching paper Section 4.3):
+Capabilities:
 
 - list source libraries, commits, and experiment classes;
 - retrieve all canonicalised class versions in commit order;
