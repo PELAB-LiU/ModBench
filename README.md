@@ -99,8 +99,8 @@ to 3.50 GHz boost) and 64 GB of RAM.
 |---|-------------------------------------|-----------:|-----------------------|
 | 1 | Filter Commits & Files              | 59.4 s     | 170.41 commits/s      |
 | 2 | Extract Simulation-Eligible Classes | 13 h 06 m  | 6.38 s/commit         |
-| 3 | Build Canonical Representation      | 99 h 05 m  | 48.47 s/commit        |
-| **Σ** | **Total**                       | **≈ 112 h 12 m** |                  |
+| 3 | Build Canonical Representation      | 66 h 48 m  | 32.72 s/commit        |
+| **Σ** | **Total**                       | **≈ 79 h 55 m** |                  |
 
 #### Pilot mode (Step 3)
 
