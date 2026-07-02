@@ -9,6 +9,7 @@ Steps 1--3 produce:
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
 from dataclasses import dataclass
@@ -37,11 +38,16 @@ CANONICAL_MODELS_BASE_DIR = DATASET_DIR / "canonical_models"
 DB_PATH = DATASET_DIR / "pipeline.db"
 STEP2_CLASSES_DB_PATH = DATASET_DIR / "step2_classes.db"
 
-# Paper artifacts (variables.tex lives next to body.tex of the SAM paper).
-# Used only by report scripts when syncing LaTeX macro values.
-PAPER_DIR = SAM2026_ROOT.parent.parent / "papers" / "SAM2026"
-VARIABLES_TEX_PATH = PAPER_DIR / "variables.tex"
-SLIDES_SECTION_PATH = SAM2026_ROOT.parent.parent / "slides" / "sections"
+# Paper artifacts. Used only by report scripts when syncing LaTeX macro
+# values. When PAPER_DIR is set (in ``.env``), variables.tex lives in the
+# paper sources; otherwise in this project root.
+_paper_dir = os.environ.get("PAPER_DIR", "")
+VARIABLES_TEX_PATH = (Path(_paper_dir) if _paper_dir else SAM2026_ROOT) / "variables.tex"
+# Optional slide content where macro usages are checked (a .tex file or a
+# directory of .tex files). Deployment-specific; set in ``.env``. When
+# unset, all variables.tex macros are treated as slide-referenced.
+_slides_section = os.environ.get("SLIDES_SECTION_PATH", "")
+SLIDES_SECTION_PATH: Path | None = Path(_slides_section) if _slides_section else None
 
 DATASET_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -282,7 +288,7 @@ def _extract_tex_macros(path: Path) -> set[str]:
 
 def get_slide_latex_macros() -> set[str]:
     variables_macros = _extract_tex_macros(VARIABLES_TEX_PATH)
-    if not SLIDES_SECTION_PATH.exists():
+    if SLIDES_SECTION_PATH is None or not SLIDES_SECTION_PATH.exists():
         return variables_macros
     if SLIDES_SECTION_PATH.is_dir():
         tex_files = sorted(SLIDES_SECTION_PATH.rglob("*.tex"))

@@ -3,16 +3,17 @@
 
 Queries the SAM2026 pipeline databases (locally by default, or remotely
 over SSH when ``USE_REMOTE=1``), computes statistics for the Modelica
-Standard Library (MSL), updates ``papers/SAM2026/variables.tex``,
-generates the step2 timeline figure under ``papers/SAM2026/figs/``,
-and prints a per-category failure breakdown.
+Standard Library (MSL), updates ``variables.tex``, generates the step2
+timeline figure under ``figs/``, and prints a per-category failure
+breakdown. Outputs go to ``PAPER_DIR`` when set (in ``.env``), else to
+this project root.
 
 Scope: this script intentionally only reports on the ``MSL`` source.
 Other sources (Buildings, ThermofluidStream, ...) may exist in the
 database but are skipped.
 
 Variables produced: exactly the 44 ``\\Mb...`` macros referenced from
-``papers/SAM2026/body.tex``. Alias macros in ``variables.tex`` (e.g.
+the paper's ``body.tex``. Alias macros in ``variables.tex`` (e.g.
 ``\\MbListProcessedCommits``) are intentionally not generated -- they
 delegate to other macros at LaTeX expansion time.
 
@@ -21,12 +22,14 @@ Usage:
     python3 reports.py --figure-only  # only regenerate the timeline figure
 
 Environment variables (override via shell or ``.env``):
+    PAPER_DIR         Directory receiving ``variables.tex`` and ``figs/``
+                      (defaults to this project root)
     USE_REMOTE        1 to read DBs / sizes over SSH instead of locally
     REMOTE_HOST       SSH host alias (required when USE_REMOTE=1)
     REMOTE_BASE       Remote base path containing ``dataset/...``
                       (i.e. the SAM2026 project root on the server)
     LOCAL_SOURCE_DIR  Local path holding MSL git clone for date resolution
-                      (defaults to ``code/SAM2026/source``)
+                      (defaults to ``code/1_SAM2026/source``)
 """
 from __future__ import annotations
 
@@ -45,23 +48,27 @@ from statistics import mean
 # Paths
 # ---------------------------------------------------------------------------
 
-SAM2026_ROOT = Path(__file__).resolve().parent                # code/SAM2026
-REPO_ROOT = SAM2026_ROOT.parent.parent                         # workspace root
-PAPER_DIR = REPO_ROOT / "papers" / "SAM2026"
-VARIABLES_TEX = PAPER_DIR / "variables.tex"
-FIG_DIR = PAPER_DIR / "figs"
+SAM2026_ROOT = Path(__file__).resolve().parent                 # project root
 
 DATASET_DIR = SAM2026_ROOT / "dataset"
 PIPELINE_DB_LOCAL = str(DATASET_DIR / "pipeline.db")
 STEP2_DB_LOCAL = str(DATASET_DIR / "step2_classes.db")
 CANONICAL_DIR_LOCAL = str(DATASET_DIR / "canonical_models" / "MSL")
 
-# Load .env if present.
+# Load .env if present (before resolving output paths below).
 try:
     from dotenv import load_dotenv  # type: ignore
     load_dotenv(SAM2026_ROOT / ".env")
 except ImportError:
     pass
+
+# Output targets. When PAPER_DIR is set (in ``.env``), variables.tex and
+# figs/ are written directly into the paper sources; otherwise into this
+# project root.
+_paper_dir = os.environ.get("PAPER_DIR", "")
+_OUT_ROOT = Path(_paper_dir) if _paper_dir else SAM2026_ROOT
+VARIABLES_TEX = _OUT_ROOT / "variables.tex"
+FIG_DIR = _OUT_ROOT / "figs"
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -78,7 +85,7 @@ REMOTE_BASE = os.environ.get("REMOTE_BASE", "").strip().rstrip("/")
 if USE_REMOTE and (not REMOTE_HOST or not REMOTE_BASE):
     raise RuntimeError(
         "USE_REMOTE=1 requires REMOTE_HOST and REMOTE_BASE to be set "
-        "(via environment or code/SAM2026/.env). See .env.example."
+        "(via environment or code/1_SAM2026/.env). See .env.example."
     )
 
 PIPELINE_DB_REMOTE = f"{REMOTE_BASE}/dataset/pipeline.db" if REMOTE_BASE else ""
@@ -484,7 +491,7 @@ def get_artifact_sizes() -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
-# Step 2 timeline figure (papers/SAM2026/figs/step2_classes_timeline.png)
+# Step 2 timeline figure (figs/step2_classes_timeline.png)
 # ---------------------------------------------------------------------------
 
 
@@ -905,7 +912,7 @@ def main() -> None:
     print(f"  -> {'all checks passed' if nfail == 0 else f'{nfail} check(s) FAILED'}")
 
     print("\n" + "=" * 60)
-    print("  Done. See papers/SAM2026/variables.tex and figs/.")
+    print(f"  Done. See {VARIABLES_TEX} and {FIG_DIR}/.")
     print("=" * 60)
 
 
