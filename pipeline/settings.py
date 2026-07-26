@@ -38,16 +38,10 @@ CANONICAL_MODELS_BASE_DIR = DATASET_DIR / "canonical_models"
 DB_PATH = DATASET_DIR / "pipeline.db"
 STEP2_CLASSES_DB_PATH = DATASET_DIR / "step2_classes.db"
 
-# Paper artifacts. Used only by report scripts when syncing LaTeX macro
-# values. When PAPER_DIR is set (in ``.env``), variables.tex lives in the
-# paper sources; otherwise in this project root.
-_paper_dir = os.environ.get("PAPER_DIR", "")
-VARIABLES_TEX_PATH = (Path(_paper_dir) if _paper_dir else SAM2026_ROOT) / "variables.tex"
-# Optional slide content where macro usages are checked (a .tex file or a
-# directory of .tex files). Deployment-specific; set in ``.env``. When
-# unset, all variables.tex macros are treated as slide-referenced.
-_slides_section = os.environ.get("SLIDES_SECTION_PATH", "")
-SLIDES_SECTION_PATH: Path | None = Path(_slides_section) if _slides_section else None
+# Generated reporting artifacts. Everything the report script produces lives
+# in this directory inside the repository; consumers copy from here.
+RESULTS_DIR = SAM2026_ROOT / "results"
+VARIABLES_TEX_PATH = RESULTS_DIR / "variables.tex"
 
 DATASET_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -99,8 +93,15 @@ class SourceConfig:
 # ---------------------------------------------------------------------------
 
 DEFAULT_SOURCES: list[tuple[str, str, str, int, str, str, str | None]] = [
+    # ModelicaServices moved during MSL history: older revisions ship it as
+    # tool-specific variants under ModelicaServices-Variants/, newer ones as a
+    # plain top-level ModelicaServices/. Both paths are listed so the library's
+    # own implementation is always loaded; "Default" is the variant the MSL
+    # readme describes as working for every tool. Without the variant path,
+    # every model reaching ModelicaServices.Animation.Shape (i.e. the MultiBody
+    # visualizers) fails with an unresolvable base class on those revisions.
     ("MSL", "source/MSL",
-     "ModelicaServices=ModelicaServices/package.mo;Complex=Complex.mo,Complex/package.mo;Modelica=Modelica/package.mo",
+     "ModelicaServices=ModelicaServices/package.mo,ModelicaServices-Variants/Default/ModelicaServices/package.mo;Complex=Complex.mo,Complex/package.mo;Modelica=Modelica/package.mo",
      1, "maint/2.2.2;maint/2.2.1;gh-pages", "master", "v3.0"),
     ("Buildings", "source/Buildings", "Buildings/package.mo", 0, "", "master", None),
     ("OpenIPSL", "source/OpenIPSL", "OpenIPSL/package.mo", 0, "", "master", None),
@@ -286,23 +287,16 @@ def _extract_tex_macros(path: Path) -> set[str]:
     return macros
 
 
-def get_slide_latex_macros() -> set[str]:
-    variables_macros = _extract_tex_macros(VARIABLES_TEX_PATH)
-    if SLIDES_SECTION_PATH is None or not SLIDES_SECTION_PATH.exists():
-        return variables_macros
-    if SLIDES_SECTION_PATH.is_dir():
-        tex_files = sorted(SLIDES_SECTION_PATH.rglob("*.tex"))
-    else:
-        tex_files = [SLIDES_SECTION_PATH]
-    section_text = "\n".join(f.read_text(encoding="utf-8") for f in tex_files)
-    return {m for m in variables_macros if re.search(re.escape(m) + r"\b", section_text)}
+def get_reported_latex_macros() -> set[str]:
+    """Every macro defined in the generated ``results/variables.tex``."""
+    return _extract_tex_macros(VARIABLES_TEX_PATH)
 
 
 def parse_variables_tex(path: Path = VARIABLES_TEX_PATH) -> list[dict[str, str | int | None]]:
     tex_files = _collect_tex_files(path)
     if not tex_files:
         return []
-    slide_macros = get_slide_latex_macros()
+    reported_macros = get_reported_latex_macros()
     parsed: list[dict[str, str | int | None]] = []
     for tex_file in tex_files:
         for raw in tex_file.read_text(encoding="utf-8").splitlines():
@@ -314,7 +308,7 @@ def parse_variables_tex(path: Path = VARIABLES_TEX_PATH) -> list[dict[str, str |
             parsed.append(
                 {
                     "name": _latex_macro_to_name(macro),
-                    "latex_name": f"\\{macro}" if f"\\{macro}" in slide_macros else None,
+                    "latex_name": f"\\{macro}" if f"\\{macro}" in reported_macros else None,
                     "default_value": value,
                     "pipeline_step_number": LATEX_TO_PIPELINE_STEP.get(f"\\{macro}"),
                 }
@@ -649,8 +643,8 @@ def _insert_run_summary_value(
     latex: str | None = None
     if latex_name:
         maybe = latex_name if latex_name.startswith("\\") else "\\" + latex_name.lstrip("\\")
-        slide_macros = get_slide_latex_macros()
-        latex = maybe if maybe in slide_macros else None
+        reported_macros = get_reported_latex_macros()
+        latex = maybe if maybe in reported_macros else None
     fallback_name = name or (_latex_macro_to_name(latex.lstrip("\\")) if latex else "metric")
     variable_id = _ensure_run_variable(
         conn,
