@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import io
 import os
+import re
 import shutil
 import sys
 import time
@@ -477,6 +478,7 @@ def reconcile_step3_db_with_files(cfg: SourceConfig) -> dict[str, int]:
     fixed_missing = 0
     fixed_present = 0
     orphan_files = 0
+    corrupt_files = 0
 
     # Safety: if the canonical output base directory is absent in this workspace,
     # do not mutate DB flags/path fields. The DB may have been populated on another
@@ -486,6 +488,7 @@ def reconcile_step3_db_with_files(cfg: SourceConfig) -> dict[str, int]:
             "fixed_missing": 0,
             "fixed_present": 0,
             "orphan_files": 0,
+            "corrupt_files": 0,
         }
 
     with get_connection() as conn:
@@ -505,7 +508,14 @@ def reconcile_step3_db_with_files(cfg: SourceConfig) -> dict[str, int]:
             if canonical_rel:
                 known_paths.add(canonical_rel)
 
+            # An empty or truncated file must count as absent, otherwise a run
+            # interrupted by a full disk gets its damaged output confirmed as
+            # canonical here.
             file_exists = bool(canonical_rel) and (PROJECT_ROOT / canonical_rel).exists()
+            if file_exists and canonical_output_problem(PROJECT_ROOT / canonical_rel):
+                file_exists = False
+                corrupt_files += 1
+
             if produced == 1 and not file_exists:
                 conn.execute(
                     """
@@ -542,6 +552,7 @@ def reconcile_step3_db_with_files(cfg: SourceConfig) -> dict[str, int]:
         "fixed_missing": fixed_missing,
         "fixed_present": fixed_present,
         "orphan_files": orphan_files,
+        "corrupt_files": corrupt_files,
     }
 
 
@@ -888,6 +899,41 @@ def load_modelica_for_commit(omc, suppressor: OMCOutputSuppressor, repo_path: Pa
 
 
 
+# A complete canonical model always ends with the terminating statement of the
+# generated total model, e.g. ``end Modelica_Blocks_Examples_Filter_total;``.
+_CANONICAL_TERMINATOR_RE = re.compile(rb"^\s*end\s+[A-Za-z_][A-Za-z0-9_.]*\s*;\s*$")
+
+
+def canonical_output_problem(output_path: Path) -> str:
+    """Return a reason string when a saved canonical file is not a complete model.
+
+    ``saveTotalModel`` creates the output file before filling it, so a full disk
+    or a crashing OMC session can leave a zero-length or half-written file
+    behind. Existence alone therefore does not mean success: without this check
+    such a file is recorded as a valid canonical model.
+    """
+    try:
+        size = output_path.stat().st_size
+    except OSError as e:
+        return f"canonical output could not be stat'ed: {e}"
+
+    if size == 0:
+        return "canonical output is empty (0 bytes)"
+
+    try:
+        with output_path.open("rb") as fh:
+            fh.seek(max(0, size - 4096))
+            tail = fh.read()
+    except OSError as e:
+        return f"canonical output could not be read: {e}"
+
+    lines = [line for line in tail.split(b"\n") if line.strip()]
+    if not lines or not _CANONICAL_TERMINATOR_RE.match(lines[-1]):
+        return "canonical output is truncated (no terminating 'end <class>;')"
+
+    return ""
+
+
 def save_canonical_model(
     omc,
     ast_omc,
@@ -907,6 +953,16 @@ def save_canonical_model(
         if output_path.exists():
             if strip_descriptions:
                 strip_descriptions_via_omc_ast(ast_omc, suppressor, output_path, class_name)
+
+            # Validate the artifact we are about to record as canonical. A bad
+            # file is removed so that a later reconcile pass cannot resurrect it
+            # by observing that the path exists.
+            problem = canonical_output_problem(output_path)
+            if problem:
+                with contextlib.suppress(OSError):
+                    output_path.unlink()
+                return False, f"{problem}; omc reported: {err}" if err else problem
+
             return True, ""
 
         return False, err or "saveTotalModel produced no output file"
@@ -993,7 +1049,8 @@ def process_source(cfg: SourceConfig, omc_version: str, start_time: float) -> No
         "[INFO]  Reconciliation    : "
         f"fixed_missing={reconcile_stats['fixed_missing']}, "
         f"fixed_present={reconcile_stats['fixed_present']}, "
-        f"orphan_files={reconcile_stats['orphan_files']}"
+        f"orphan_files={reconcile_stats['orphan_files']}, "
+        f"corrupt_files={reconcile_stats['corrupt_files']}"
     )
 
     enumerated_all_classes = not pilot_enabled
