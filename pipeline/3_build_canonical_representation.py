@@ -1152,6 +1152,7 @@ def process_source(cfg: SourceConfig, omc_version: str, start_time: float) -> No
 
             try:
                 repo.git.checkout(checkout_target, force=True)
+                _clean_worktree(repo)
             except git.GitCommandError as e:
                 msg = f"Failed to checkout commit {checkout_target}: {e}"
                 record_extraction_failure(cfg.name, commit_hash, "", "checkout_failed", msg, db=db)
@@ -1289,6 +1290,21 @@ def process_source(cfg: SourceConfig, omc_version: str, start_time: float) -> No
         pass
 
 
+def _clean_worktree(repo: git.Repo) -> None:
+    """Remove untracked leftovers so the worktree matches the checked-out commit.
+
+    Worktrees are reused across thousands of commits, and ``checkout --force``
+    only updates *tracked* files. Every file that existed in a previously
+    visited revision but not in the current one therefore survives as an
+    untracked leftover, and the tree slowly becomes a union of many revisions.
+    Those leftovers eventually collide with the checked-out revision -- a stale
+    ``Foo/`` package directory next to the revision's ``Foo.mo``, say -- and
+    ``loadFile`` on the main package fails outright, which the pipeline records
+    as ``load_model_failed`` for an otherwise perfectly good commit.
+    """
+    repo.git.clean("-xdff")
+
+
 def _ensure_clean_worktree_base(repo: git.Repo) -> None:
     try:
         repo.git.worktree("prune")
@@ -1421,6 +1437,7 @@ def _worker_loop(
 
         try:
             repo.git.checkout(checkout_target, force=True)
+            _clean_worktree(repo)
         except git.GitCommandError as e:
             msg = f"Failed to checkout commit {checkout_target}: {e}"
             record_extraction_failure(cfg.name, commit_hash, "", "checkout_failed", msg, db=db)

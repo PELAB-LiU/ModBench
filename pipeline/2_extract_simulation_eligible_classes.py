@@ -523,6 +523,20 @@ def _cleanup_stale_worktrees(repo_path: Path, source_name: str) -> None:
         print(f"[INFO]  Removed {removed} stale worktree(s) in {wt_base}")
 
 
+def _clean_worktree(repo: git.Repo) -> None:
+    """Remove untracked leftovers so the worktree matches the checked-out commit.
+
+    Worktrees are reused across thousands of commits, and ``checkout --force``
+    only updates *tracked* files. Every file that existed in a previously
+    visited revision but not in the current one therefore survives as an
+    untracked leftover, and the tree slowly becomes a union of many revisions.
+    Left in place those leftovers can collide with the checked-out revision --
+    a stale ``Foo/`` package directory next to the revision's ``Foo.mo``, say --
+    and make ``loadFile`` on the main package fail for an otherwise good commit.
+    """
+    repo.git.clean("-xdff")
+
+
 def _create_or_reset_worktree(
     *,
     repo_path: Path,
@@ -633,6 +647,7 @@ def _worker_loop(
 
         try:
             repo.git.checkout(checkout_target, force=True)
+            _clean_worktree(repo)
         except git.GitCommandError as e:
             db.upsert_enumeration_progress(
                 source_name=cfg.name,
@@ -902,6 +917,7 @@ def process_source(cfg: SourceConfig, omc_version: str, start_time: float) -> No
 
             try:
                 repo.git.checkout(checkout_target, force=True)
+                _clean_worktree(repo)
             except git.GitCommandError as e:
                 _upsert_enumeration_progress(cfg.name, commit_hash, "complete", 0, db=db)
                 continue
