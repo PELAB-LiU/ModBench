@@ -22,9 +22,9 @@ SAM2026/
 │   └── 3_build_canonical_representation_profile.py
 ├── reports.py             # Regenerates LaTeX macros and figures for the paper
 ├── dataset/               # Generated artifacts (the three stores)
-│   ├── pipeline.db        # Step 1 + Step 3 tables (~1.3 GB on MSL)
-│   ├── step2_classes.db   # Class-listing store (~8.7 GB on MSL)
-│   └── canonical_models/  # Canonical .mo files (~198 GB on MSL)
+│   ├── pipeline.db        # Step 1 + Step 3 tables (~1.2 GB on MSL)
+│   ├── step2_classes.db   # Class-listing store (~12 GB on MSL)
+│   └── canonical_models/  # Canonical .mo files (~197 GB on MSL)
 ├── access/                # Read-only API, notebook
 │   ├── api.py
 │   └── explore.ipynb
@@ -89,7 +89,7 @@ from the contents of `pipeline.db`.
 ### Reference runtimes (MSL)
 
 The numbers below are wall-clock times measured on a full MSL run of
-7,360 retained commits (after Step 1) using **OpenModelica 1.28.0~dev**.
+7,360 retained commits (after Step 1) using **OpenModelica 1.28.0**.
 Steps 2 and 3 ran with **8 parallel worker processes**. The host is a
 Dell PowerEdge R630 server running Ubuntu 24.04 LTS with 2× Intel Xeon
 E5-2623 v3 CPUs (8 physical cores / 16 threads total at 3.00 GHz, up
@@ -97,10 +97,10 @@ to 3.50 GHz boost) and 64 GB of RAM.
 
 | # | Step                                | Wall-clock | Throughput            |
 |---|-------------------------------------|-----------:|-----------------------|
-| 1 | Filter Commits & Files              | 59.4 s     | 170.41 commits/s      |
-| 2 | Extract Simulation-Eligible Classes | 13 h 06 m  | 6.38 s/commit         |
-| 3 | Build Canonical Representation      | 66 h 48 m  | 32.72 s/commit        |
-| **Σ** | **Total**                       | **≈ 79 h 55 m** |                  |
+| 1 | Filter Commits & Files              | 62 s       | 163.53 commits/s      |
+| 2 | Extract Simulation-Eligible Classes | 1 h 18 m   | 0.64 s/commit         |
+| 3 | Build Canonical Representation      | 59 h 55 m  | 29.31 s/commit        |
+| **Σ** | **Total**                       | **≈ 61 h 14 m** |                  |
 
 #### Pilot mode (Step 3)
 
