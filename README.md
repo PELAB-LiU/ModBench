@@ -24,7 +24,7 @@ SAM2026/
 ├── dataset/               # Generated artifacts (the three stores)
 │   ├── pipeline.db        # Step 1 + Step 3 tables (~1.2 GB on MSL)
 │   ├── step2_classes.db   # Class-listing store (~12 GB on MSL)
-│   └── canonical_models/  # Canonical .mo files (~197 GB on MSL)
+│   └── canonical_models/  # Canonical .mo files (~199 GB on MSL)
 ├── access/                # Read-only API, notebook
 │   ├── api.py
 │   └── explore.ipynb
@@ -99,8 +99,8 @@ to 3.50 GHz boost) and 64 GB of RAM.
 |---|-------------------------------------|-----------:|-----------------------|
 | 1 | Filter Commits & Files              | 62 s       | 163.53 commits/s      |
 | 2 | Extract Simulation-Eligible Classes | 1 h 18 m   | 0.64 s/commit         |
-| 3 | Build Canonical Representation      | 59 h 55 m  | 29.31 s/commit        |
-| **Σ** | **Total**                       | **≈ 61 h 14 m** |                  |
+| 3 | Build Canonical Representation      | 62 h 43 m  | 30.68 s/commit        |
+| **Σ** | **Total**                       | **≈ 64 h 02 m** |                  |
 
 #### Pilot mode (Step 3)
 
