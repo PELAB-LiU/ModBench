@@ -1,0 +1,59 @@
+% --- OMC version used throughout the pipeline -----------------------------
+\newcommand{\MbToolOmc}{v1.28.0}
+
+% --- Step 1: commit filtering funnel (MSL) --------------------------------
+\newcommand{\MbFilterInputCommits}{10{,}139}
+\newcommand{\MbFilterExclBranches}{223}
+\newcommand{\MbFilterAfterBranches}{9{,}916}
+\newcommand{\MbFilterExclPreVThree}{1{,}334}
+\newcommand{\MbFilterAfterPreVThree}{8{,}582}
+\newcommand{\MbFilterExclBot}{88}
+\newcommand{\MbFilterAfterBot}{8{,}494}
+\newcommand{\MbFilterExclNoMo}{1{,}134}
+\newcommand{\MbFilterRetained}{7{,}360}
+\newcommand{\MbFilterRetainedPct}{72.6}             % percent retained from input
+
+% --- Step 2: class listing on MSL --------------------------------------
+\newcommand{\MbListDistinctClassNames}{9{,}067}
+\newcommand{\MbListAllClassVersions}{38{,}903{,}069}
+\newcommand{\MbListNonExperimentVersions}{36{,}320{,}196}
+\newcommand{\MbListNonExperimentPct}{93.4}
+\newcommand{\MbListExperimentVersions}{2{,}582{,}873}
+\newcommand{\MbListExperimentPct}{6.6}
+\newcommand{\MbListMaxExperimentPerCommit}{535}
+% All classes loaded by OMC per commit:
+\newcommand{\MbGrowthAllClassMean}{5{,}546}
+% Largest all-class count observed in a single commit:
+\newcommand{\MbGrowthAllClassMax}{6{,}373}
+% Experiment classes per commit:
+\newcommand{\MbGrowthExperimentMean}{368}
+% Per-commit average ratio of experiment to all classes (in percent):
+\newcommand{\MbGrowthExperimentRatioMean}{6.5}
+
+% --- Step 3: canonicalization on MSL --------------------------------------
+\newcommand{\MbCanonCommitsWithExperiment}{7{,}015}
+\newcommand{\MbCanonCommitsWithExperimentPct}{95.3}
+\newcommand{\MbCanonProducedVersions}{2{,}505{,}835}
+\newcommand{\MbCanonProducedPct}{97.0}
+\newcommand{\MbCanonFailures}{77{,}038}
+\newcommand{\MbCanonFailuresPct}{3.0}
+
+% --- MSL on-disk artifacts ------------------------------------------------
+\newcommand{\MbStorePipelineDbSize}{1.2\,GB}
+\newcommand{\MbStoreClassEnumDbSize}{12\,GB}
+\newcommand{\MbStoreCanonicalDirSize}{199\,GB}
+
+% --- Failure analysis (Step 3 canon. failures, MSL) -----------------------
+\newcommand{\MbFailOperatorRestriction}{61{,}960}
+\newcommand{\MbFailOperatorRestrictionPct}{80.4}
+\newcommand{\MbFailMissingClass}{7{,}274}
+\newcommand{\MbFailMissingClassPct}{9.4}
+\newcommand{\MbFailRedeclare}{5{,}825}
+\newcommand{\MbFailRedeclarePct}{7.6}
+\newcommand{\MbFailMissingBase}{1{,}023}
+\newcommand{\MbFailMissingBasePct}{1.3}
+\newcommand{\MbFailTimeout}{675}
+\newcommand{\MbFailTimeoutPct}{0.9}
+\newcommand{\MbFailPackageLoad}{281}
+\newcommand{\MbFailPackageLoadPct}{0.4}
+
