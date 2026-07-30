@@ -166,7 +166,17 @@ DEFAULT_PIPELINE_SETTINGS: list[tuple[int, str, str | None]] = [
     (3, "DRY_RUN_LIMIT", None),
     (3, "PILOT_ENABLED", "1"),
     (3, "PILOT_ALLOW_PREFIX", "1"),
-    (3, "AST_STRIP_DESCRIPTIONS", "1"),
+]
+
+# Keys no step reads, as (step, key). _remove_obsolete_run_settings() deletes
+# them from a database that still carries them, so nobody sets a value that has
+# no effect. Removing non-semantic annotations, for instance, is not
+# configurable: it costs a fraction of a percent of a commit, so step 3 always
+# does it.
+REMOVED_PIPELINE_SETTINGS: list[tuple[int, str]] = [
+    (3, "AST_STRIP_DESCRIPTIONS"),
+    (3, "STRIP_DESCRIPTIONS"),
+    (3, "STRIP_NON_SEMANTIC_ANNOTATIONS"),
 ]
 
 
@@ -333,6 +343,19 @@ def _resolve_repo_path(raw_repo_path: str, source_name: str) -> Path:
         idx = raw.parts.index("source")
         return SAM2026_ROOT / Path(*raw.parts[idx:])
     return raw
+
+
+def _remove_obsolete_run_settings(conn: sqlite3.Connection) -> None:
+    """Drop settings rows that no step reads.
+
+    Such a row is worse than no row: it reads like a knob, and turning it does
+    nothing.
+    """
+    for step, key in REMOVED_PIPELINE_SETTINGS:
+        conn.execute(
+            "DELETE FROM run_settings WHERE pipeline_step_number = ? AND key = ?",
+            (step, key),
+        )
 
 
 def _normalize_source_repo_paths(conn: sqlite3.Connection) -> None:
@@ -558,6 +581,7 @@ def init_database() -> None:
             """,
             DEFAULT_SOURCES,
         )
+        _remove_obsolete_run_settings(conn)
         conn.executemany(
             "INSERT OR IGNORE INTO run_settings(pipeline_step_number, key, value) VALUES (?, ?, ?)",
             [(int(s), k, "" if v is None else str(v)) for s, k, v in DEFAULT_PIPELINE_SETTINGS],
