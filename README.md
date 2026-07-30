@@ -98,9 +98,14 @@ to 3.50 GHz boost) and 64 GB of RAM.
 | # | Step                                | Wall-clock | Throughput            |
 |---|-------------------------------------|-----------:|-----------------------|
 | 1 | Filter Commits & Files              | 62 s       | 163.53 commits/s      |
-| 2 | Extract Simulation-Eligible Classes | 1 h 18 m   | 0.64 s/commit         |
+| 2 | Extract Simulation-Eligible Classes | 13 h 06 m (1 h 18 m) | 6.38 s/commit (0.64) |
 | 3 | Build Canonical Representation      | 62 h 43 m  | 30.68 s/commit        |
-| **Σ** | **Total**                       | **≈ 64 h 02 m** |                  |
+| **Σ** | **Total**                       | **≈ 75 h 50 m** (≈ 64 h 02 m) |        |
+
+Step 2 writes each commit's class index to `cache/step2_class_index/` and reuses
+it on a later run, which skips the per-class `isExperiment` query that dominates
+enumeration. The wall-clock figures are for a cold cache — what a first run on a
+library costs. The figures in parentheses are a re-run with that cache warm.
 
 #### What a canonical representation excludes (Step 3)
 
