@@ -309,74 +309,216 @@ def _omc_call(omc, suppressor: OMCOutputSuppressor, expr: str):
         return None
 
 
-def strip_descriptions_via_omc_ast(
-    ast_omc,
-    suppressor: OMCOutputSuppressor,
-    canonical_file: Path,
-    original_class_name: str,
-) -> bool:
-    """Strip class/component description strings using OMC AST scripting APIs."""
-    if _omc_call(ast_omc, suppressor, "clear()") is None:
-        return False
+def omc_supports_strip_flags(omc, suppressor: OMCOutputSuppressor) -> bool:
+    """Whether this compiler's ``saveTotalModel`` takes the strip flags.
 
-    load_expr = f'loadFile("{canonical_file}")'
-    loaded = _omc_call(ast_omc, suppressor, load_expr)
-    if not loaded:
-        return False
+    Checked once at startup, so a compiler that cannot strip descriptions stops
+    the run instead of quietly filling the corpus with models that carry them.
+    """
+    signature = _omc_call(omc, suppressor, "list(OpenModelica.Scripting.saveTotalModel)")
+    text = signature if isinstance(signature, str) else str(signature or "")
+    return "stripComments" in text and "stripAnnotations" in text
 
-    top_classes_raw = _omc_call(ast_omc, suppressor, "getClassNames()")
-    if not isinstance(top_classes_raw, (list, tuple)):
-        return False
 
-    top_classes = [str(c) for c in top_classes_raw if isinstance(c, str) and c.strip()]
-    if not top_classes:
-        return False
+# ---------------------------------------------------------------------------
+# NON-SEMANTIC ANNOTATIONS
+# ---------------------------------------------------------------------------
 
-    all_classes: list[str] = []
-    for top in top_classes:
-        cls_expr = f"getClassNames({top}, recursive=true, qualified=true)"
-        rec = _omc_call(ast_omc, suppressor, cls_expr)
-        if isinstance(rec, (list, tuple)):
-            all_classes.extend(str(c) for c in rec if isinstance(c, str) and c.strip())
+# ``saveTotalModel`` drops graphical and Documentation annotations on its own, and
+# with ``stripComments`` every description string, but it keeps more than the
+# annotations a compiler acts on: library metadata such as ``version`` and
+# ``dateModified`` survives too, and that metadata changes between commits without
+# any model changing. Canonical models are only comparable across a library's
+# history once it is gone.
+#
+# Everything listed here has no effect on compilation, simulation or results:
+# library bookkeeping, editor and GUI hints, unit-display metadata, and graphical
+# annotations a save may keep. Anything absent from the list is kept, which covers
+# the annotations OMC acts on -- ``experiment`` (also step 2's eligibility
+# marker), ``derivative``, ``inverse``, ``smoothOrder``, ``Inline``,
+# ``LateInline``, ``Evaluate``, ``HideResult``, ``Library``, ``Include``,
+# ``IncludeDirectory``, ``unassignedMessage``, ``missingInnerMessage``,
+# ``mustBeConnected``, ``__OpenModelica_*`` -- and anything nobody has classified.
+_NON_SEMANTIC_ANNOTATIONS: frozenset[str] = frozenset(
+    {
+        # Library bookkeeping. These differ between commits of a library whenever
+        # a release is cut, whether or not any model changed.
+        "version",
+        "versionDate",
+        "versionBuild",
+        "dateModified",
+        "revisionId",
+        "uses",
+        "conversion",
+        "obsolete",
+        # Editor and GUI hints.
+        "preferredView",
+        "defaultComponentName",
+        "defaultComponentPrefixes",
+        "Dialog",
+        "choices",
+        "choicesAllMatching",
+        "colorSelector",
+        "singleInstance",
+        "showDiagramLabel",
+        "connectorSizing",
+        # Unit display: how a tool labels a plotted quantity.
+        "absoluteValue",
+        "inverseUnit",
+        # Graphical. Icon and Diagram never survive a save, but IconMap and
+        # DiagramMap do, so the list covers both cases.
+        "Icon",
+        "Diagram",
+        "IconMap",
+        "DiagramMap",
+        "Placement",
+        "Line",
+        "Text",
+        "Rectangle",
+        "Polygon",
+        "Ellipse",
+        "Bitmap",
+        "coordinateSystem",
+        "graphics",
+        "Documentation",
+    }
+)
 
-    if not all_classes:
-        all_classes = top_classes
+# Vendor-specific annotations are prefixed ``__<Vendor>_`` and a tool ignores
+# every prefix but its own (Modelica Specification 3.6, section 18.1), so another
+# vendor's annotations cannot affect a corpus built with OMC. OpenModelica's own
+# are read by the compiler and kept, including any not listed above.
+_VENDOR_PREFIX_RE = re.compile(r"^__([A-Za-z0-9]+)_")
+_OWN_VENDOR = "OpenModelica"
 
-    seen: set[str] = set()
-    ordered_classes: list[str] = []
-    for cls in all_classes:
-        if cls not in seen:
-            ordered_classes.append(cls)
-            seen.add(cls)
+_IDENTIFIER_RE = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]*")
+_STRING_RE = re.compile(r'"(?:[^"\\]|\\.)*"', re.DOTALL)
 
-    for cls in ordered_classes:
-        _omc_call(ast_omc, suppressor, f'OpenModelica.Scripting.setClassComment({cls}, "")')
-        _omc_call(ast_omc, suppressor, f'OpenModelica.Scripting.setDocumentationAnnotation({cls}, "", "")')
 
-        comp_count = _omc_call(ast_omc, suppressor, f"OpenModelica.Scripting.getComponentCount({cls})")
-        if not isinstance(comp_count, int) or comp_count <= 0:
-            continue
+def _is_non_semantic(key: str) -> bool:
+    """Whether an annotation named *key* can be dropped from a canonical model."""
+    if key in _NON_SEMANTIC_ANNOTATIONS:
+        return True
+    vendor = _VENDOR_PREFIX_RE.match(key)
+    return bool(vendor) and vendor.group(1) != _OWN_VENDOR
 
-        for idx in range(1, comp_count + 1):
-            nth = _omc_call(ast_omc, suppressor, f"OpenModelica.Scripting.getNthComponent({cls}, {idx})")
-            if not isinstance(nth, (list, tuple)) or len(nth) < 2:
-                continue
-            component_name = str(nth[1]).strip()
-            if not component_name or not component_name.isidentifier():
-                continue
-            _omc_call(ast_omc, suppressor, f'OpenModelica.Scripting.setComponentComment({cls}, {component_name}, "")')
 
-    short_name = original_class_name.split(".")[-1]
-    preferred_total = f"{short_name}_total"
-    export_class = next((c for c in top_classes if c.endswith("_total")), "")
-    if not export_class and preferred_total in top_classes:
-        export_class = preferred_total
-    if not export_class:
-        export_class = top_classes[-1]
+def _annotation_key(item: str) -> str:
+    """Return the annotation name an item declares, or ``""`` if malformed."""
+    match = _IDENTIFIER_RE.match(item.strip())
+    return match.group(0) if match else ""
 
-    save_expr = f'saveTotalModel("{canonical_file}", {export_class})'
-    saved = _omc_call(ast_omc, suppressor, save_expr)
-    return bool(saved) and canonical_file.exists()
+
+def _mask_strings(text: str) -> str:
+    """Return *text* with the contents of every string literal blanked out.
+
+    Same length, same indices, so a scan can run over the mask and slice the
+    original. Structural scanning has to ignore what is inside a string, since an
+    annotation value may well contain a comma or a parenthesis.
+    """
+    return _STRING_RE.sub(lambda m: '"' + "." * (m.end() - m.start() - 2) + '"', text)
+
+
+def _match_paren(text: str, open_index: int) -> int:
+    """Return the index just past the ``)`` closing the ``(`` at *open_index*."""
+    depth = 0
+    for i in range(open_index, len(text)):
+        if text[i] == "(":
+            depth += 1
+        elif text[i] == ")":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+    return -1
+
+
+def _split_top_level_items(body: str) -> list[tuple[int, int]]:
+    """Return ``(start, end)`` spans of the comma-separated items in *body*."""
+    spans: list[tuple[int, int]] = []
+    depth = 0
+    start = 0
+    for i, ch in enumerate(body):
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        elif ch == "," and depth == 0:
+            spans.append((start, i))
+            start = i + 1
+    if body[start:].strip():
+        spans.append((start, len(body)))
+    return spans
+
+
+def annotation_items(text: str) -> list[str]:
+    """Return the top-level items of the modification in *text*.
+
+    ``getElementAnnotation`` returns an element's annotation as a bare
+    modification -- ``(version = "4.0.0", uses(...))``, without the
+    ``annotation`` keyword -- and an empty string for an element that has none.
+    Item boundaries come from a string-masked copy, while the items themselves are
+    sliced from the original.
+    """
+    masked = _mask_strings(text)
+    open_index = masked.find("(")
+    if open_index == -1:
+        return []
+    close_index = _match_paren(masked, open_index)
+    if close_index == -1:
+        return []
+
+    body_start, body_end = open_index + 1, close_index - 1
+    spans = _split_top_level_items(masked[body_start:body_end])
+    return [text[body_start + s : body_start + e].strip() for s, e in spans]
+
+
+def clean_package_annotation(omc, suppressor: OMCOutputSuppressor, package: str) -> str:
+    """Drop the non-semantic entries from *package*'s own annotation.
+
+    ``setElementAnnotation`` replaces an element's annotation in the AST the
+    compiler holds, so every model saved afterwards comes out of the compiler
+    already free of it and no saved file is ever edited. Entries that are
+    semantic, or that nobody has classified, are written back unchanged.
+
+    Returns an error message, or ``""``.
+    """
+    raw = _omc_call(omc, suppressor, f"getElementAnnotation({package})")
+    items = annotation_items(raw if isinstance(raw, str) else "")
+    if not items:
+        return ""
+
+    keep = [item for item in items if not _is_non_semantic(_annotation_key(item))]
+    if len(keep) == len(items):
+        return ""
+
+    expr = f"setElementAnnotation({package}, $annotation({', '.join(keep)}))"
+    if not _omc_call(omc, suppressor, expr):
+        return f"setElementAnnotation({package}) failed"
+    return ""
+
+
+def clean_loaded_library(omc, suppressor: OMCOutputSuppressor, cfg: SourceConfig) -> str:
+    """Strip the non-semantic annotations off the packages this commit loaded.
+
+    Runs once per commit, right after the library is loaded and before any class
+    is saved, so every canonical model of that commit is free of the library
+    metadata that changes at each release -- roughly 0.3 s per commit against
+    ~27 s of saving a 40-class commit.
+
+    Package-level annotations only. The same annotations also occur on individual
+    classes, components and extends clauses, but reading every class's annotation
+    costs ~15 ms per element -- around 90 s per commit for MSL -- and those
+    occurrences are identical in every commit, so they never make a class look
+    modified.
+
+    Returns a message describing anything that went wrong, or ``""``.
+    """
+    errors = [
+        error
+        for name, _ in cfg.load_targets
+        if (error := clean_package_annotation(omc, suppressor, name))
+    ]
+    return "; ".join(errors)
 
 
 def read_commit_hashes_for_source(source_name: str, dry_run_limit: int | None) -> list[str]:
@@ -936,24 +1078,37 @@ def canonical_output_problem(output_path: Path) -> str:
 
 def save_canonical_model(
     omc,
-    ast_omc,
     suppressor: OMCOutputSuppressor,
     class_name: str,
     output_path: Path,
-    strip_descriptions: bool,
 ) -> tuple[bool, str]:
+    """Write the canonical representation of *class_name* to *output_path*.
+
+    ``stripComments`` removes every description string as the total model is
+    written, in one pass over the AST the compiler already holds. Description
+    strings carry no semantics, so two class versions that differ only in their
+    documentation must not read as two different models. It is always on, and not
+    a setting: the flag costs nothing measurable.
+
+    ``stripAnnotations`` stays off: it would drop the annotations a compiler acts
+    on -- ``experiment``, ``derivative``, ``smoothOrder``, ``Evaluate``, and the
+    ``Library``/``Include`` clauses an external function needs to build. The
+    non-semantic annotations that a save keeps are handled before any of this, by
+    ``clean_package_annotations`` on the freshly loaded library, so the file
+    written here is used exactly as the compiler wrote it.
+    """
     output_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         with suppressor.suppress_omc_output():
-            omc.sendExpression(f'saveTotalModel("{output_path}", {class_name})')
+            omc.sendExpression(
+                f'saveTotalModel("{output_path}", {class_name}, '
+                f"stripAnnotations = false, stripComments = true)"
+            )
             errors = omc.sendExpression("getErrorString()")
 
         err = _normalize_omc_error_string(errors)
 
         if output_path.exists():
-            if strip_descriptions:
-                strip_descriptions_via_omc_ast(ast_omc, suppressor, output_path, class_name)
-
             # Validate the artifact we are about to record as canonical. A bad
             # file is removed so that a later reconcile pass cannot resurrect it
             # by observing that the path exists.
@@ -1000,7 +1155,6 @@ def process_source(cfg: SourceConfig, omc_version: str, start_time: float) -> No
 
     pilot_enabled = get_setting_bool(_STEP_NUMBER, "PILOT_ENABLED", default=True)
     allow_prefix = get_setting_bool(_STEP_NUMBER, "PILOT_ALLOW_PREFIX", default=True)
-    strip_descriptions = get_setting_bool(_STEP_NUMBER, "AST_STRIP_DESCRIPTIONS", default=True)
     # Keep Step 3 bounded by default for expensive runs.
     dry_run_limit = get_setting_int(_STEP_NUMBER, "DRY_RUN_LIMIT")
     pilot_items = read_pilot_sublibraries()
@@ -1010,7 +1164,6 @@ def process_source(cfg: SourceConfig, omc_version: str, start_time: float) -> No
         run_settings={
             "pilot_enabled": pilot_enabled,
             "pilot_allow_prefix": allow_prefix,
-            "ast_strip_descriptions": strip_descriptions,
             "dry_run_limit": dry_run_limit,
             "pilot_sublibraries_count": len(pilot_items),
             "default_branch": cfg.default_branch,
@@ -1018,11 +1171,14 @@ def process_source(cfg: SourceConfig, omc_version: str, start_time: float) -> No
         },
     )
 
-    ast_omc = None
-    if strip_descriptions:
-        ast_omc = init_omc_session()
-        if ast_omc is None:
-            sys.exit(1)
+    if not omc_supports_strip_flags(omc, OMCOutputSuppressor()):
+        print(
+            "[ERROR] This OpenModelica build's saveTotalModel has no stripComments flag, "
+            "so description strings cannot be stripped while the model is saved.\n"
+            "        Canonical models would not be comparable across commits. Upgrade omc.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     commit_hashes = read_commit_hashes_for_source(cfg.name, dry_run_limit)
 
@@ -1041,7 +1197,6 @@ def process_source(cfg: SourceConfig, omc_version: str, start_time: float) -> No
     print(f"[INFO]  Already processed : {len(processed_commits):,}")
     print(f"[INFO]  Remaining         : {len(remaining_commits):,}")
     print(f"[INFO]  Pilot mode enabled : {pilot_enabled}")
-    print(f"[INFO]  AST strip enabled  : {strip_descriptions}")
     if pilot_enabled:
         print(f"[INFO]  Pilot classes      : {len(pilot_items):,}")
 
@@ -1118,7 +1273,6 @@ def process_source(cfg: SourceConfig, omc_version: str, start_time: float) -> No
             processed_initial=len(processed_commits),
             pilot_enabled=pilot_enabled,
             allow_prefix=allow_prefix,
-            strip_descriptions=strip_descriptions,
             pilot_items=pilot_items,
             workers=workers,
             run_id=run_id,
@@ -1165,6 +1319,12 @@ def process_source(cfg: SourceConfig, omc_version: str, start_time: float) -> No
                 upsert_step3_commit_progress(cfg.name, commit_hash, "complete", 0, 0, 1, db=db)
                 continue
 
+            cleanup_error = clean_loaded_library(omc, suppressor, cfg)
+            if cleanup_error:
+                record_extraction_failure(
+                    cfg.name, commit_hash, "", "annotation_cleanup_failed", cleanup_error, db=db
+                )
+
             if pilot_enabled:
                 # Use pilot list directly (assume all are experiments)
                 classes_with_flags = [(item, True) for item in pilot_items]
@@ -1199,11 +1359,9 @@ def process_source(cfg: SourceConfig, omc_version: str, start_time: float) -> No
                 output_file = cfg.canonical_models_dir / commit_hash / f"{class_name.replace('.', '_')}.mo"
                 ok, error_message = save_canonical_model(
                     omc,
-                    ast_omc,
                     suppressor,
                     class_name,
                     output_file,
-                    strip_descriptions,
                 )
                 canonical_path = str(output_file.relative_to(PROJECT_ROOT)) if ok else ""
 
@@ -1273,7 +1431,6 @@ def process_source(cfg: SourceConfig, omc_version: str, start_time: float) -> No
         f"Canonical models saved  : {totals['total_saved']:,}\n"
         f"Extraction failures     : {totals['total_failures']:,}\n"
         f"Pilot mode enabled      : {pilot_enabled}\n"
-        f"AST strip enabled       : {strip_descriptions}\n"
         f"Pilot sublibrary count  : {len(pilot_items):,}\n"
         f"Interrupted             : {interrupted}\n"
     )
@@ -1394,7 +1551,6 @@ def _worker_loop(
     stop_event: "mp.Event",
     pilot_enabled: bool,
     allow_prefix: bool,
-    strip_descriptions: bool,
     pilot_items: list[str],
     worker_id: int,
     classes_batch_size: int,
@@ -1411,7 +1567,6 @@ def _worker_loop(
     omc = init_omc_session()
     if omc is None:
         return
-    ast_omc = init_omc_session() if strip_descriptions else None
     db = QueueDBSink(op_queue)
     suppressor = OMCOutputSuppressor()
 
@@ -1464,6 +1619,12 @@ def _worker_loop(
             )
             continue
 
+        cleanup_error = clean_loaded_library(omc, suppressor, cfg)
+        if cleanup_error:
+            record_extraction_failure(
+                cfg.name, commit_hash, "", "annotation_cleanup_failed", cleanup_error, db=db
+            )
+
         if pilot_enabled:
             classes_with_flags = [(item, True) for item in pilot_items]
         else:
@@ -1501,11 +1662,9 @@ def _worker_loop(
             output_file = cfg.canonical_models_dir / commit_hash / f"{class_name.replace('.', '_')}.mo"
             ok, error_message = save_canonical_model(
                 omc,
-                ast_omc,
                 suppressor,
                 class_name,
                 output_file,
-                strip_descriptions,
             )
             canonical_path = str(output_file.relative_to(PROJECT_ROOT)) if ok else ""
 
@@ -1567,7 +1726,6 @@ def _process_source_parallel(
     processed_initial: int,
     pilot_enabled: bool,
     allow_prefix: bool,
-    strip_descriptions: bool,
     pilot_items: list[str],
     workers: int,
     run_id: int,
@@ -1606,7 +1764,6 @@ def _process_source_parallel(
                 "stop_event": stop_event,
                 "pilot_enabled": pilot_enabled,
                 "allow_prefix": allow_prefix,
-                "strip_descriptions": strip_descriptions,
                 "pilot_items": pilot_items,
                 "worker_id": wid,
                 "classes_batch_size": classes_batch_size,

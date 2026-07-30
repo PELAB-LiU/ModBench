@@ -102,6 +102,126 @@ to 3.50 GHz boost) and 64 GB of RAM.
 | 3 | Build Canonical Representation      | 62 h 43 m  | 30.68 s/commit        |
 | **Σ** | **Total**                       | **≈ 64 h 02 m** |                  |
 
+#### What a canonical representation excludes (Step 3)
+
+A canonical representation must be comparable across a library's history: two
+snapshots of a class should differ only when the class itself does. Everything
+with no effect on compilation or simulation is therefore removed while the model
+is still inside the compiler — no saved file is ever edited afterwards.
+
+**Description strings** go during the save. `saveTotalModel` is called with
+`stripComments = true`, which removes every description string — on classes,
+components, function arguments and enumeration literals. The flag costs nothing
+measurable, so it is not configurable. The save also removes, on its own:
+graphical annotations (`Icon`, `Diagram`, `Placement`, `Line`), `Documentation`,
+source comments, and part of the library metadata (`uses`, `conversion`,
+`revisionId`, `preferredView`, `defaultComponentName`).
+
+The companion flag `stripAnnotations` is deliberately **not** used: it would also
+remove the annotations a compiler acts on, including the `experiment` annotation
+that marks a class simulation-eligible.
+
+**Library release metadata** goes once per commit, right after the library is
+loaded and before any class is saved. `version`, `versionDate`, `versionBuild` and
+`dateModified` sit on a library's top-level packages and change whenever a release
+is cut, so left in place they make **every** model in the library look modified at
+every version bump — the exact signal a history study is trying to measure.
+`clean_loaded_library()` rewrites those package annotations in the AST the compiler
+holds, through `getElementAnnotation` / `setElementAnnotation`, keeping every entry
+that is semantic or not yet classified. It costs ~0.25 s per commit, against ~27 s
+to save a 40-class commit.
+
+##### Worked example
+
+This model carries every non-semantic annotation that survives a `saveTotalModel`
+call, plus descriptions, graphics and `Documentation`:
+
+```modelica
+package AnnotationSurvivors "Removed: package description"
+  // Removed: source comment.
+  annotation(
+    version = "1.2.3", versionDate = "2026-07-30", versionBuild = 4,
+    dateModified = "2026-07-30 12:00:00Z", revisionId = "R1",
+    uses(Modelica(version = "4.0.0")), conversion(noneFromVersion = "1.0.0"),
+    preferredView = "info",
+    Documentation(info = "<html>Removed: Documentation.</html>"));
+
+  type Angle = Real(unit = "rad") "Removed: type description"
+    annotation(absoluteValue = true);
+
+  record Settings "Removed: record description"
+    parameter Real gain = 2 "Removed: parameter description";
+    annotation(defaultComponentPrefixes = "parameter", defaultComponentName = "settings");
+  end Settings;
+
+  partial model Base "Removed: base description"
+    Real y "Removed: variable description";
+  end Base;
+
+  model Example "Removed: model description"
+    extends Base annotation(IconMap(primitivesVisible = false));
+    Settings settings annotation(choicesAllMatching = true, __Dymola_editText = false);
+    Angle phi "Removed: component description"
+      annotation(Placement(transformation(extent = {{-10,-10},{10,10}})));
+  equation
+    y = settings.gain * time;
+    phi = y;
+    annotation(
+      experiment(StopTime = 2, Tolerance = 1e-6),
+      __OpenModelica_commandLineOptions = "-d=initialization",
+      __Dymola_Commands(file = "plotResults.mos"),
+      Icon(graphics = {Rectangle(extent = {{-100,-100},{100,100}})}),
+      Diagram(coordinateSystem(extent = {{-100,-100},{100,100}})));
+  end Example;
+end AnnotationSurvivors;
+```
+
+Step 3 turns it into:
+
+```modelica
+package AnnotationSurvivors
+  type Angle = Real(unit = "rad") annotation(absoluteValue = true);
+
+  record Settings
+    parameter Real gain = 2;
+    annotation(defaultComponentPrefixes = "parameter");
+  end Settings;
+
+  partial model Base
+    Real y;
+  end Base;
+
+  model Example
+    extends Base annotation(IconMap(primitivesVisible = false));
+    Settings settings annotation(choicesAllMatching = true, __Dymola_editText = false);
+    Angle phi;
+  equation
+    y = settings.gain*time;
+    phi = y;
+    annotation(experiment(StopTime = 2, Tolerance = 1e-6), __OpenModelica_commandLineOptions = "-d=initialization", __Dymola_Commands(file = "plotResults.mos"));
+  end Example;
+end AnnotationSurvivors;
+
+model Example_total
+  extends AnnotationSurvivors.Example;
+ annotation(experiment(StopTime = 2, Tolerance = 1e-6), __OpenModelica_commandLineOptions = "-d=initialization");
+end Example_total;
+```
+
+Gone: every description string, the source comment, `Documentation`, the graphics,
+and the package's `version`, `versionDate`, `versionBuild`, `dateModified`,
+`revisionId`, `uses`, `conversion` and `preferredView`. Kept: `experiment` and
+`__OpenModelica_commandLineOptions`, which the compiler reads.
+
+What remains and is not semantic — `absoluteValue`, `defaultComponentPrefixes`,
+`IconMap`, `choicesAllMatching`, `__Dymola_*` — sits on individual classes,
+components and extends clauses rather than on the package. Reaching those would
+mean reading the annotation of every class in the library, ~15 ms per element or
+about 90 s for MSL's 6,373 classes, several times the cost of saving a whole
+commit. They are also identical in every commit, so they never make a class look
+modified; only a library edit to one of them shows up, and that is a real source
+change.
+
 #### Pilot mode (Step 3)
 
 Step 3 supports an optional **pilot** mode that restricts canonicalization
